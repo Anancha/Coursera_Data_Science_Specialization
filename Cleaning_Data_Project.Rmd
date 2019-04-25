@@ -1,0 +1,111 @@
+---
+title: 'Coursera - Getting and Cleaning Data: Course Project'
+author: "Christoph Schauer"
+date: "03 May 2018"
+output: html_document
+---
+
+## Introduction
+
+This notebook contains the code of the course project for the course [Getting and Cleaning Data](https://www.coursera.org/learn/data-cleaning) of the [Data Science Specialization](https://www.coursera.org/specializations/jhu-data-science) by John Hopkins University on Coursera, lightly edited for clarity. 
+
+From the explanation of the project:
+
+*The purpose of this project is to demonstrate your ability to collect, work with, and clean a data set. The goal is to prepare tidy data that can be used for later analysis. [...]*
+
+*One of the most exciting areas in all of data science right now is wearable computing - see for example this article . Companies like Fitbit, Nike, and Jawbone Up are racing to develop the most advanced algorithms to attract new users. The data linked to from the course website represent data collected from the accelerometers from the Samsung Galaxy S smartphone. A full description is available at the site where the data was obtained:*
+
+http://archive.ics.uci.edu/ml/datasets/Human+Activity+Recognition+Using+Smartphones
+
+*Here is the data for the project:*
+
+https://d396qusza40orc.cloudfront.net/getdata%2Fprojectfiles%2FUCI%20HAR%20Dataset.zip
+
+*You should create one R script that does the following:*     
+
+* *Merges the training and the test sets to create one data set.*
+* *Extracts only the measurements on the mean and standard deviation for each measurement.*
+* *Uses descriptive activity names to name the activities in the data set.*
+* *Appropriately labels the data set with descriptive variable names.*
+* *From the data set in step 4, creates a second, independent tidy data set with the average of each variable for each activity and each subject.*
+
+
+## Assignment 
+
+#### 0. Load required packages
+```{r, echo = FALSE}
+library(dplyr)
+library(stringr)
+```
+
+#### 1. Download and unzip data
+```{r}
+filename = "dataset.zip"
+fileurl = "https://d396qusza40orc.cloudfront.net/getdata%2Fprojectfiles%2FUCI%20HAR%20Dataset.zip"
+
+if (!file.exists(filename)) {
+     download.file(fileurl, filename)
+}
+if (!file.exists("UCI HAR Dataset")) {
+     unzip(filename)
+}     
+```
+
+#### 2. Load feature and activity labels
+```{r}
+features = read.table("UCI HAR Dataset/features.txt")
+features = as.character(features[, 2])
+activity_labels = read.table("UCI HAR Dataset/activity_labels.txt")
+activity_labels[, 2] = c("walking", "walking_upstairs", "walking_downstairs", "sitting", "standing", "laying")
+```
+
+#### 3. Load training and test data and attach variable names
+```{r}
+train = read.table("UCI HAR Dataset/train/X_train.txt")
+train_subjects = read.table("UCI HAR Dataset/train/subject_train.txt")
+train_activities = read.table("UCI HAR Dataset/train/y_train.txt")
+train_subjects = as.factor(train_subjects[, 1])
+train_activities = as.factor(train_activities[, 1])
+train = cbind(train_subjects, train_activities, train)
+colnames(train) = c("subject", "activity", features)
+
+test = read.table("UCI HAR Dataset/test/X_test.txt")
+test_subjects = read.table("UCI HAR Dataset/test/subject_test.txt")
+test_activities = read.table("UCI HAR Dataset/test/y_test.txt")
+test_subjects = as.factor(test_subjects[, 1])
+test_activities = as.factor(test_activities[, 1])
+test = cbind(test_subjects, test_activities, test)
+colnames(test) = c("subject", "activity", features)
+```
+
+#### 4. Merge training and test data
+```{r}
+data = rbind(train, test)
+```
+
+#### 6. Extract the measurements on the mean and standard deviation for each measurement
+```{r}
+features_wanted = str_subset(features, ".*mean.*|.*std.*")   
+data_wanted = data[, c("subject", "activity", features_wanted)] 
+```
+
+#### 7. Attach descriptive activity names to name the activities in the data set
+```{r}
+data_wanted$activity = factor(data_wanted$activity, levels = activity_labels[, 1], labels = activity_labels[, 2])
+```
+
+#### 8. Create a second independent tidy data set with the average of each variable for each activity and each subject and export the data as tidy.txt
+```{r}
+data_tidy = data_wanted %>% group_by(subject, activity) %>% summarize_all(mean)
+colnames(data_tidy) = colnames(data_wanted)
+write.table(data_tidy, "tidy.txt", quote = FALSE, sep = ",", col.names = TRUE, row.names = FALSE)
+```
+
+The final tidy data set contains 180 observations of 81 variables: The mean of each movement variable by each subject and activity for 30 subjects, 6 activities, and 79 movement variables.
+
+```{r}
+dim(data_tidy)
+levels(data_tidy$subject)
+levels(data_tidy$activity)
+data_tidy
+```
