@@ -1,0 +1,230 @@
+---
+title: "Coursera - Practical Machine Learning: Course Project"
+author: "Christoph Schauer"
+date: "13 May 2018"
+output: html_document
+---
+
+## Introduction
+
+This notebook contains the code of the course project for the course [Practical Machine Learning](https://www.coursera.org/learn/practical-machine-learning) of the [Data Science Specialization](https://www.coursera.org/specializations/jhu-data-science) by John Hopkins University on Coursera, lightly edited for clarity. The goal of this project is to predict the way in which participants of a study performed certain exercises using motion data from wearables.
+
+From the description of the assignment:
+
+*Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here:*
+
+*The goal of your project is to predict the manner in which they did the exercise. This is the "classe" variable in the training set. You may use any of the other variables to predict with. You should create a report describing how you built your model, how you used cross validation, what you think the expected out of sample error is, and why you made the choices you did. You will also use your prediction model to predict 20 different test cases.*
+
+The data is from the following study:
+
+Velloso, E.; Bulling, A.; Gellersen, H.; Ugulino, W.; Fuks, H. *"Qualitative Activity Recognition of Weight Lifting Exercises. Proceedings of 4th International Conference in Cooperation with SIGCHI (Augmented Human '13)"*. Stuttgart, Germany: ACM SIGCHI, 2013.
+
+In this study, data was collected from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. The participants were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available here: http://groupware.les.inf.puc-rio.br/har.
+
+A short description of the datasets from the authors' website:
+
+*Six young health participants were asked to perform one set of 10 repetitions of the Unilateral Dumbbell Biceps Curl in five different fashions: exactly according to the specification (Class A), throwing the elbows to the front (Class B), lifting the dumbbell only halfway (Class C), lowering the dumbbell only halfway (Class D) and throwing the hips to the front (Class E).*
+
+*Class A corresponds to the specified execution of the exercise, while the other 4 classes correspond to common mistakes. Participants were supervised by an experienced weight lifter to make sure the execution complied to the manner they were supposed to simulate. The exercises were performed by six male participants aged between 20-28 years, with little weight lifting experience. We made sure that all participants could easily simulate the mistakes in a safe and controlled manner by using a relatively light dumbbell (1.25kg).*
+
+The training data for this project is available here: https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+
+The evaluation data (used for evaluating prediction accuracy in quiz in the assignment) is available here: https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+
+## Approach
+
+For this kind of data, nonparametric models are likely to yield the good results. I estimated two nonparametric ensemble learning models: Random forests and boosted decision trees. As both approaches are intrinsically blended models that use a large number of bootstrapped subsamples for their estimations, I only split the data into one training and one test sample without additional resampling such as k-fold cross-validation.
+
+The final random forest model proves highly accurate and performs better than the boosted model. The model is able to predict all 20 classes from the evaluation set correctly.
+
+### Prepare data
+
+### Load required packages
+
+```{r, warning = FALSE, message = FALSE}
+library(caret)
+library(randomForest)
+library(gbm)
+library(ggplot2)
+library(ggpubr)
+```
+
+### Load and clean up data
+
+```{r, warning = FALSE}
+pml_training = read.csv("pml-training.csv", stringsAsFactors = FALSE)
+pml_testing = read.csv("pml-testing.csv", stringsAsFactors = FALSE)
+classe = as.factor(pml_training$classe)
+numeric_vars = data.frame(lapply(pml_training[, 8:159], function(x) as.numeric(as.character(x))))
+data_full = data.frame(classe, numeric_vars)
+```
+
+Dimensions of the data set:
+```{r}
+dim(data_full)
+```
+
+The data, data_full, excludes some variables from the raw data which not needed for analysis (ID, participant names, date and time variables, and window variables). All motion data is converted from various data types to numeric. The dataset contains 19622 observations and 153 variables.
+
+### Partition data into a training and test set
+
+```{r}
+set.seed(123)
+in_train = createDataPartition(y = data_full$classe, p = 0.6, list = FALSE)
+data_train  = data_full[in_train, ]
+data_test  = data_full[-in_train, ]
+```
+
+Dimensions of the data:
+```{r}
+dim(data_train)
+dim(data_test)
+table(data_train$classe)
+```
+
+60% of all observations are randomly put into the training set, 40% into the test set. Sampling happens without replacement. The training set contains 11776 observations, the test set 7846. The table shows that there is a similar amount of observations for each way in which participants performed the exercise, i.e. the factors of the dependent variable "classe".
+
+### Drop variables with many missing values and near zero variance
+
+Many of the variables of this data set have very high numbers of missing observations and are therefore not very useful for prediction. All variables with more than 95% of values missing are therefore excluded.
+
+```{r}
+NA95 = sapply(data_train, function(x) mean(is.na(x))) > 0.95
+data_train = data_train[, NA95 == FALSE]
+data_test = data_test[, NA95 == FALSE]
+dim(data_train)
+```
+
+Of the 152 explanatory variables, 100 are dropped, leaving 52 in the data set.  
+
+Variables with near zero variance are excluded as well. Variables that vary barely or not at all are not useful for prediction.
+
+```{r}
+nearZeroVar(data_train)
+```
+
+As it happens, after excluding all variables with more than 95% of values missing, no variable with near zero variance remains in the data.
+
+## Visualizations
+
+Violin plots with the most influential variables (see random forest section) show that there seem to be some differences in distribution between the classes of activities, but they're not super clear cut.
+
+```{r}
+ggarrange(
+     ggplot(data_train) + geom_violin(aes(classe, roll_belt, fill = classe)),
+     ggplot(data_train) + geom_violin(aes(classe, yaw_belt, fill = classe)),
+     ggplot(data_train) + geom_violin(aes(classe, magnet_dumbbell_z, fill = classe)),
+     ggplot(data_train) + geom_violin(aes(classe, pitch_forearm, fill = classe)),
+     ncol = 2, nrow = 2, common.legend = TRUE
+)
+```
+
+Scatterplots of some of the influential variables illustrate the potential for separation better:
+
+```{r}
+ggarrange(
+     ggplot(data_train) + geom_point(aes(x = yaw_belt, y = roll_belt, color = classe), alpha = 0.25) +
+          theme_light(),
+     ggplot(data_train) + geom_point(aes(x = yaw_belt, y = magnet_dumbbell_z, color = classe), alpha = 0.25) +
+          theme_light(),
+     ggplot(data_train) + geom_point(aes(x = roll_belt, y = magnet_dumbbell_z, color = classe), alpha = 0.25) +
+          theme_light(),
+     ggplot(data_train) + geom_point(aes(x = pitch_forearm, y = pitch_belt, color = classe), alpha = 0.25) +
+          theme_light(),
+     ncol = 2, nrow = 2, common.legend = TRUE
+)
+```
+
+
+### Estimate random forest models on training sample
+
+I grow 3 random forest models, each with 500 trees and with 3, 5, 7, and 9 variables to be considered at each split, respectively. The default value is the square root of the number of predictors, which is 7 here. The package used for estimation is randomForest.
+
+```{r}
+set.seed(123)
+forest3 = randomForest(classe ~ ., data = data_train, ntree = 500, mtry = 3, importance = TRUE)
+forest5 = randomForest(classe ~ ., data = data_train, ntree = 500, mtry = 5, importance = TRUE)
+forest7 = randomForest(classe ~ ., data = data_train, ntree = 500, mtry = 7, importance = TRUE)
+forest9 = randomForest(classe ~ ., data = data_train, ntree = 500, mtry = 9, importance = TRUE)
+
+forest3
+forest5
+forest7
+forest9
+```
+
+The expected out-of-sample error rate for all models is around 0.6% - 0.7%. The actual confusion matrices and error rates on the test data are very similar, as expected:
+
+```{r}
+classe.rf3 = predict(forest3, newdata = data_test)
+classe.rf5 = predict(forest5, newdata = data_test)
+classe.rf7 = predict(forest7, newdata = data_test)
+classe.rf9 = predict(forest9, newdata = data_test)
+
+table(classe.rf3, data_test$classe)
+table(classe.rf5, data_test$classe)
+table(classe.rf7, data_test$classe)
+table(classe.rf9, data_test$classe)
+
+table(classe.rf3 == data_test$classe) # rf5
+table(classe.rf5 == data_test$classe) # rf5
+table(classe.rf7 == data_test$classe) # rf7
+table(classe.rf9 == data_test$classe) # rf9
+```
+
+I will use the model with the default mtry of 7 for the quiz, with an error rate 0.64%. The model with mtry of 5 seems to be more accurate, but there are some observations missing.
+
+The following variables are the most influential in the random forest model:
+
+```{r}
+importance = rowMeans(forest7$importance)
+importance = sort(importance, decreasing = TRUE)
+head(importance, 10)
+```
+
+## Estimate boosted classification tree model
+
+This model successively grows 500 trees with 7 leaves each, and is using all the default options otherwise. The package used for estimation is gbm.
+
+```{r}
+boost7 = gbm(classe ~ ., data = data_train, n.trees = 500, distribution = "multinomial",
+              interaction.depth = 7)
+boost7
+```
+
+The confusion matrix for this boosted model shows that there are significantly more misclassifications on the test set than in the random forest model:
+
+```{r}
+classe.boost7 = predict(boost7, newdata = data_test, n.trees = 500, type = "response")
+classe.boost7 = apply(classe.boost7, 1, which.max)
+table(classe.boost7, data_test$classe)
+```
+
+The results stay worse than those of the random forest model even if the number of trees and leaves grown are varied. Results are not shown because it takes a bit to compute.
+
+## Generate predictions for quiz data
+
+```{r}
+data_quiz = data.frame(lapply(pml_testing[, 8:159], function(x) as.numeric(as.character(x))))
+data_quiz = data_quiz[, NA95[-1] == FALSE]
+classe.rf7.quiz = predict(forest7, newdata = data_quiz)
+classe.rf7.quiz
+```
+
+These predictions are used to evualuate the prediction accuracy of the model in quiz. The estimated random forest model predicts all cases correctly.
+
+## Addendum
+
+### Estimating a random forest model with caret
+
+At the time of doing the assignment, I wasn't very familiar with caret, so I didn't use it for estimating the random forest model. Caret optimizes a couple of parameters automatically. The following code estimates a random forest in caret, using only 100 trees to speed up computations.
+
+```{r}
+set.seed(123)
+caretforest = train(classe ~ ., data = data_train, method = "rf", ntree = 100)
+caretforest
+classe.caretforest = predict(caretforest, newdata = data_test)
+table(classe.caretforest, data_test$classe)
+table(classe.caretforest == data_test$classe)
+```
